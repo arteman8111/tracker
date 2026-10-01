@@ -1,0 +1,116 @@
+:root {
+  color-scheme: dark;
+  --bg: #2f303a;
+  --sidebar: #26272f;
+  --card: #383944;
+  --card-hover: #3e3f4c;
+  --inset: #22232b;
+  --line: rgba(255, 255, 255, 0.08);
+  --text: #d2d3dc;
+  --muted: #9394a3;
+  --faint: #7c7d8e;
+  --warm: #c4a090;
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button { cursor: pointer; }
+
+.app {
+  display: flex;
+  height: 100%;
+  min-width: 960px;
+}
+
+.side {
+  width: 232px;
+  flex: none;
+  background: var(--sidebar);
+  display: flex;
+  flex-direction: column;
+  padding: 22px 14px 16px;
+}
+
+.brand {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 0 8px 8px;
+}
+
+.brand-key {
+  font-size: 15px;
+  letter-spacing: 0.12em;
+}
+
+.brand-sub {
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.nav-label {
+  margin: 22px 10px 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.mark {
+  width: 28px;
+  height: 28px;
+  color: var(--faint);
+}
+
+.mark path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  color: var(--muted);
+}
+
+.empty .mark {
+  width: 72px;
+  height: 72px;
+  color: #6a6b7c;
+}
+
+.empty p { margin: 0; }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #45465a transparent;
+}
