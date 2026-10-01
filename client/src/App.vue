@@ -36,6 +36,8 @@ async function addPerson() {
       <div class="nav-label">Работа</div>
       <nav>
         <RouterLink to="/board">Доска</RouterLink>
+        <RouterLink to="/backlog">Бэклог</RouterLink>
+        <RouterLink to="/roadmap">Roadmap</RouterLink>
       </nav>
       <div class="side-foot">
         <div class="nav-label">Вы</div>
