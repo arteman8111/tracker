@@ -27,7 +27,7 @@ export async function seed() {
     }
 
     const project = await client.query(
-      `INSERT INTO projects (key, name) VALUES ('RKS', 'Внутренний трекер') RETURNING id`,
+      `INSERT INTO projects (key, name) VALUES ('TASK', 'Наш трекер') RETURNING id`,
     )
     const projectId = project.rows[0].id
 

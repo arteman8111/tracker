@@ -201,6 +201,26 @@ collabRouter.get('/attachments/:id', wrap(async (req, res) => {
   res.download(abs, rows[0].filename)
 }))
 
+collabRouter.patch('/attachments/:id', wrap(async (req, res) => {
+  const id = idOf(req.params.id)
+  const filename = String(req.body?.filename || '').trim()
+  if (!filename || filename.length > 180) throw bad('Имя файла: от 1 до 180 символов')
+  const issueId = await withTx(async (client) => {
+    await requireUser(client, req.userId)
+    const projectId = await getProjectId()
+    const current = await client.query(
+      `SELECT a.id, a.issue_id, a.filename FROM attachments a
+       JOIN issues i ON i.id = a.issue_id
+       WHERE a.id = $1 AND i.project_id = $2`,
+      [id, projectId],
+    )
+    if (!current.rows[0]) throw bad('Файл не найден', 404)
+    await client.query('UPDATE attachments SET filename = $1 WHERE id = $2', [filename, id])
+    return current.rows[0].issue_id
+  })
+  res.json(await getDetail(issueId))
+}))
+
 collabRouter.delete('/attachments/:id', wrap(async (req, res) => {
   const id = idOf(req.params.id)
   const removed = await withTx(async (client) => {
