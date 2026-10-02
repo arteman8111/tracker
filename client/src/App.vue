@@ -1,15 +1,27 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { RouterLink, RouterView } from 'vue-router'
 import IssueDrawer from './components/IssueDrawer.vue'
 import Mark from './components/Mark.vue'
+import Onboarding from './components/Onboarding.vue'
 import { boot, createUser, setError, setMe, state } from './state.js'
 
+const seenKey = 'rks-onboarded'
 const adding = ref(false)
+const guide = ref(false)
 const name = ref('')
 const email = ref('')
 
 onMounted(() => { boot() })
+
+watch(() => state.ready, (ready) => {
+  if (ready && !localStorage.getItem(seenKey)) guide.value = true
+})
+
+function closeGuide() {
+  guide.value = false
+  localStorage.setItem(seenKey, '1')
+}
 
 async function addPerson() {
   try {
@@ -39,6 +51,7 @@ async function addPerson() {
         <RouterLink to="/backlog">Бэклог</RouterLink>
         <RouterLink to="/roadmap">Roadmap</RouterLink>
       </nav>
+      <button class="guide-link" type="button" @click="guide = true">Как пользоваться</button>
       <div class="side-foot">
         <div class="nav-label">Вы</div>
         <select :value="state.meId || ''" aria-label="Текущий человек" @change="setMe($event.target.value)">
@@ -60,5 +73,6 @@ async function addPerson() {
       <RouterView v-else />
     </main>
     <IssueDrawer v-if="state.detail" />
+    <Onboarding :open="guide" @close="closeGuide" />
   </div>
 </template>

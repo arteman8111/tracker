@@ -206,6 +206,59 @@ input:focus, select:focus, textarea:focus { border-color: rgba(255, 255, 255, 0.
 .empty .mark { width: 72px; height: 72px; color: #6a6b7c; }
 .empty p { margin: 0; }
 
+.guide-link {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  color: var(--faint);
+}
+.guide-link:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
+
+.guide-back {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.45);
+}
+.guide {
+  position: fixed;
+  z-index: 41;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(440px, calc(100% - 48px));
+  padding: 28px 28px 22px;
+  background: var(--sidebar);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.guide .mark { width: 36px; height: 36px; }
+.guide-kicker {
+  margin: 18px 0 0;
+  color: var(--faint);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+.guide h2 {
+  margin: 6px 0 10px;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.guide p { margin: 0; color: var(--muted); }
+.guide-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+.guide-foot .quiet { margin-right: auto; }
+
 .backdrop {
   position: fixed;
   inset: 0;
