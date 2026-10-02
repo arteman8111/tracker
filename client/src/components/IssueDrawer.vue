@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import Icon from './Icon.vue'
 import {
   fileSize, formatWhen, historyField, historyValue, hoursText, isoDate,
   PRIORITIES, sprintStatus, STATUSES, TYPES,
@@ -7,7 +8,7 @@ import {
 import {
   addChecklist, addComment, closeIssue, createLabel, deleteChecklist, deleteComment,
   deleteFile, deleteTime, logTime, patchChecklist, queueIssueSave, removeIssue,
-  setError, state, uploadFile,
+  renameFile, setError, state, uploadFile,
 } from '../state.js'
 
 const form = reactive({
@@ -16,7 +17,7 @@ const form = reactive({
   type: 'task',
   status: 'todo',
   priority: 'medium',
-  assigneeId: '',
+  assigneeIds: [],
   sprintId: '',
   estimateHours: '',
   startDate: '',
@@ -31,6 +32,11 @@ const timeHours = ref('')
 const timeNote = ref('')
 const timeDate = ref(isoDate(new Date()))
 const confirmDelete = ref(false)
+const pending = ref([])
+const dropHot = ref(false)
+const askRemove = ref(null)
+const renaming = ref(null)
+const renameValue = ref('')
 let silent = true
 
 function payload() {
@@ -40,7 +46,7 @@ function payload() {
     type: form.type,
     status: form.status,
     priority: form.priority,
-    assigneeId: form.assigneeId ? Number(form.assigneeId) : null,
+    assigneeIds: [...form.assigneeIds],
     sprintId: form.sprintId ? Number(form.sprintId) : null,
     estimateHours: form.estimateHours === '' ? null : Number(form.estimateHours),
     startDate: form.startDate || null,
@@ -56,7 +62,8 @@ function fill(issue) {
   form.type = issue.type
   form.status = issue.status
   form.priority = issue.priority
-  form.assigneeId = issue.assignee ? String(issue.assignee.id) : ''
+  const people = issue.assignees?.length ? issue.assignees : (issue.assignee ? [issue.assignee] : [])
+  form.assigneeIds = people.map((person) => person.id)
   form.sprintId = issue.sprint ? String(issue.sprint.id) : ''
   form.estimateHours = issue.estimateHours ?? ''
   form.startDate = issue.startDate || ''
@@ -96,6 +103,12 @@ async function run(fn) {
   } catch (error) {
     setError(error)
   }
+}
+
+function toggleAssignee(id) {
+  const index = form.assigneeIds.indexOf(id)
+  if (index >= 0) form.assigneeIds.splice(index, 1)
+  else form.assigneeIds.push(id)
 }
 
 function toggleLabel(id) {
@@ -144,11 +157,72 @@ async function submitTime() {
   })
 }
 
-async function onFile(event) {
-  const file = event.target.files?.[0]
+function queueFiles(list) {
+  for (const file of list) {
+    if (file.size > 10 * 1024 * 1024) {
+      setError(new Error('Файл больше 10 МБ'))
+      continue
+    }
+    pending.value.push({
+      id: `${file.name}-${file.size}-${Math.random().toString(16).slice(2)}`,
+      file,
+      name: file.name,
+      size: file.size,
+      progress: 0,
+    })
+  }
+}
+
+function onPick(event) {
+  queueFiles(event.target.files || [])
   event.target.value = ''
-  if (!file) return
-  await run(() => uploadFile(file))
+}
+
+function onDropFiles(event) {
+  dropHot.value = false
+  queueFiles(event.dataTransfer?.files || [])
+}
+
+function discardPending() {
+  pending.value = []
+}
+
+async function attachPending() {
+  const queue = [...pending.value]
+  for (const item of queue) {
+    await run(() => uploadFile(item.file, (value) => { item.progress = value }))
+    pending.value = pending.value.filter((row) => row.id !== item.id)
+  }
+}
+
+async function openFile(file) {
+  const token = localStorage.getItem('rks-token')
+  const response = await fetch(`/api/attachments/${file.id}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!response.ok) {
+    setError(new Error('Файл не открылся'))
+    return
+  }
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = file.filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function startRename(file) {
+  renaming.value = file.id
+  renameValue.value = file.filename
+}
+
+async function saveRename(file) {
+  const filename = renameValue.value.trim()
+  renaming.value = null
+  if (!filename || filename === file.filename) return
+  await run(() => renameFile(file.id, filename))
 }
 
 function onKey(event) {
@@ -170,7 +244,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         </div>
         <input v-model="form.title" class="title-input" aria-label="Название" />
       </div>
-      <button class="btn quiet" type="button" @click="closeIssue()">Закрыть</button>
+      <button class="btn quiet" type="button" @click="closeIssue()"><Icon name="close" /> Закрыть</button>
     </header>
 
     <div class="drawer-body">
@@ -190,12 +264,19 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <option v-for="item in PRIORITIES" :key="item.id" :value="item.id">{{ item.name }}</option>
           </select>
         </label>
-        <label>Исполнитель
-          <select v-model="form.assigneeId">
-            <option value="">Никто</option>
-            <option v-for="user in state.users" :key="user.id" :value="String(user.id)">{{ user.name }}</option>
-          </select>
-        </label>
+        <div class="assignees">
+          <span>Исполнители</span>
+          <div class="chips">
+            <button
+              v-for="user in state.users"
+              :key="user.id"
+              type="button"
+              class="chip"
+              :class="{ on: form.assigneeIds.includes(user.id) }"
+              @click="toggleAssignee(user.id)"
+            >{{ user.name }}</button>
+          </div>
+        </div>
         <label>Спринт
           <select v-model="form.sprintId">
             <option value="">Бэклог</option>
@@ -231,7 +312,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       </div>
       <form class="inline" @submit.prevent="submitLabel">
         <input v-model="labelName" placeholder="Новая метка" maxlength="24" />
-        <button class="btn" type="submit">Добавить</button>
+        <button class="btn" type="submit"><Icon name="plus" /> Добавить</button>
       </form>
 
       <div class="section-label">Чеклист</div>
@@ -249,12 +330,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               @change="run(() => patchChecklist(item.id, { title: $event.target.value }))"
             />
           </label>
-          <button class="btn quiet" type="button" @click="run(() => deleteChecklist(item.id))">убрать</button>
+          <button class="btn quiet" type="button" @click="run(() => deleteChecklist(item.id))"><Icon name="trash" /> убрать</button>
         </li>
       </ul>
       <form class="inline" @submit.prevent="submitCheck">
         <input v-model="checkTitle" placeholder="Пункт" maxlength="200" />
-        <button class="btn" type="submit">Добавить</button>
+        <button class="btn" type="submit"><Icon name="plus" /> Добавить</button>
       </form>
 
       <div class="section-label">Время</div>
@@ -270,41 +351,76 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <li v-for="entry in state.detail.timeLogs" :key="entry.id">
           <span>{{ hoursText(entry.hours) }} ч · {{ entry.user?.name || 'кто-то' }} · {{ entry.loggedAt }}</span>
           <span v-if="entry.note" class="muted">{{ entry.note }}</span>
-          <button class="btn quiet" type="button" @click="run(() => deleteTime(entry.id))">убрать</button>
+          <button class="btn quiet" type="button" @click="run(() => deleteTime(entry.id))"><Icon name="trash" /> убрать</button>
         </li>
       </ul>
       <form class="inline" @submit.prevent="submitTime">
         <input v-model="timeHours" type="number" min="0.25" max="24" step="0.25" placeholder="Часы" required />
         <input v-model="timeNote" placeholder="Заметка" maxlength="500" />
         <input v-model="timeDate" type="date" required />
-        <button class="btn" type="submit">Списать</button>
+        <button class="btn" type="submit"><Icon name="clock" /> Списать</button>
       </form>
 
       <div class="section-label">Файлы</div>
-      <ul class="plain">
+      <ul class="uploads">
         <li v-for="file in state.detail.attachments" :key="file.id">
-          <a :href="`/api/attachments/${file.id}`">{{ file.filename }}</a>
-          <span class="muted">{{ fileSize(file.sizeBytes) }}</span>
-          <button class="btn quiet" type="button" @click="run(() => deleteFile(file.id))">убрать</button>
+          <Icon name="file" />
+          <div class="upload-main">
+            <input
+              v-if="renaming === file.id"
+              v-model="renameValue"
+              @keydown.enter.prevent="saveRename(file)"
+              @blur="saveRename(file)"
+            />
+            <button v-else class="link" type="button" @click="openFile(file)">{{ file.filename }}</button>
+            <span class="muted">{{ fileSize(file.sizeBytes) }}</span>
+          </div>
+          <button class="icon-btn" type="button" aria-label="Переименовать" @click="startRename(file)"><Icon name="pencil" /></button>
+          <button class="icon-btn" type="button" aria-label="Убрать файл" @click="askRemove = file.id"><Icon name="trash" /></button>
+          <div v-if="askRemove === file.id" class="confirm-pop">
+            <p>Убрать файл?</p>
+            <button class="btn quiet" type="button" @click="askRemove = null">Отмена</button>
+            <button class="btn" type="button" @click="run(() => deleteFile(file.id)); askRemove = null">Убрать</button>
+          </div>
+        </li>
+        <li v-for="item in pending" :key="item.id">
+          <Icon name="file" />
+          <div class="upload-main">
+            <span>{{ item.name }}</span>
+            <span class="muted">{{ fileSize(Math.round(item.size * item.progress)) }} из {{ fileSize(item.size) }}</span>
+            <span class="progress"><i :style="{ width: `${Math.round(item.progress * 100)}%` }"></i></span>
+          </div>
+          <button class="icon-btn" type="button" aria-label="Убрать из очереди" @click="pending = pending.filter((row) => row.id !== item.id)"><Icon name="trash" /></button>
         </li>
       </ul>
-      <label class="file">
-        Приложить файл до 10 МБ
-        <input type="file" @change="onFile" />
+      <label
+        class="drop"
+        :class="{ hot: dropHot }"
+        @dragover.prevent="dropHot = true"
+        @dragleave="dropHot = false"
+        @drop.prevent="onDropFiles"
+      >
+        <Icon name="clip" />
+        <span>Перетащите файлы сюда или <u>выберите</u></span>
+        <input type="file" multiple @change="onPick" />
       </label>
+      <div v-if="pending.length" class="upload-actions">
+        <button class="btn quiet" type="button" @click="discardPending">Отменить</button>
+        <button class="btn" type="button" @click="attachPending"><Icon name="clip" /> Прикрепить</button>
+      </div>
 
       <div class="section-label">Комментарии</div>
       <article v-for="item in state.detail.comments" :key="item.id" class="comment">
         <header>
           <strong>{{ item.author?.name || 'кто-то' }}</strong>
           <time>{{ formatWhen(item.createdAt) }}</time>
-          <button class="btn quiet" type="button" @click="run(() => deleteComment(item.id))">убрать</button>
+          <button class="btn quiet" type="button" @click="run(() => deleteComment(item.id))"><Icon name="trash" /> убрать</button>
         </header>
         <p>{{ item.body }}</p>
       </article>
       <form @submit.prevent="submitComment">
         <textarea v-model="comment" rows="3" placeholder="Комментарий" maxlength="5000"></textarea>
-        <button class="btn" type="submit">Отправить</button>
+        <button class="btn" type="submit"><Icon name="send" /> Отправить</button>
       </form>
 
       <div class="section-label">История</div>
@@ -323,7 +439,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       </ul>
 
       <div class="danger">
-        <button v-if="!confirmDelete" class="btn quiet" type="button" @click="confirmDelete = true">Удалить задачу</button>
+        <button v-if="!confirmDelete" class="btn quiet" type="button" @click="confirmDelete = true"><Icon name="trash" /> Удалить задачу</button>
         <button v-else class="btn" type="button" @click="run(() => removeIssue(state.detail.id))">Удалить безвозвратно</button>
       </div>
     </div>

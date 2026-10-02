@@ -34,7 +34,13 @@ const LIST_SQL = `
       FROM issue_labels il
       JOIN labels l ON l.id = il.label_id
       WHERE il.issue_id = i.id
-    ), '[]'::json) AS labels
+    ), '[]'::json) AS labels,
+    COALESCE((
+      SELECT json_agg(json_build_object('id', u.id, 'name', u.name, 'initials', u.initials) ORDER BY u.name)
+      FROM issue_assignees ia
+      JOIN users u ON u.id = ia.user_id
+      WHERE ia.issue_id = i.id
+    ), '[]'::json) AS assignees
   FROM issues i
   JOIN projects p ON p.id = i.project_id
   LEFT JOIN users a ON a.id = i.assignee_id
@@ -42,8 +48,22 @@ const LIST_SQL = `
   LEFT JOIN sprints s ON s.id = i.sprint_id
 `
 
+function peopleOf(row) {
+  const raw = typeof row.assignees === 'string' ? JSON.parse(row.assignees) : row.assignees
+  const people = Array.isArray(raw) ? raw.filter((person) => person && person.id) : []
+  if (!people.length && row.assignee_id) {
+    people.push({
+      id: row.assignee_id,
+      name: row.assignee_name,
+      initials: row.assignee_initials,
+    })
+  }
+  return people
+}
+
 function shapeIssue(row, withDescription = false) {
   const labels = typeof row.labels === 'string' ? JSON.parse(row.labels) : row.labels
+  const assignees = peopleOf(row)
   const issue = {
     id: row.id,
     key: row.key,
@@ -54,9 +74,8 @@ function shapeIssue(row, withDescription = false) {
     priority: row.priority,
     estimateHours: row.estimate_hours,
     spentHours: Number(row.spent_hours),
-    assignee: row.assignee_id
-      ? { id: row.assignee_id, name: row.assignee_name, initials: row.assignee_initials }
-      : null,
+    assignees,
+    assignee: assignees[0] || null,
     reporter: row.reporter_id ? { id: row.reporter_id, name: row.reporter_name } : null,
     sprint: row.sprint_id ? { id: row.sprint_id, name: row.sprint_name } : null,
     startDate: row.start_date,
@@ -316,20 +335,40 @@ issuesRouter.patch('/issues/:id', wrap(async (req, res) => {
       next.estimate_hours = estimate
     }
 
-    if (body.assigneeId !== undefined) {
-      const assigneeId = body.assigneeId == null || body.assigneeId === '' ? null : idOf(body.assigneeId)
-      if (assigneeId) {
-        const found = await client.query('SELECT id FROM users WHERE id = $1', [assigneeId])
-        if (!found.rows[0]) throw bad('Исполнитель не найден', 404)
+    if (body.assigneeIds !== undefined || body.assigneeId !== undefined) {
+      const raw = Array.isArray(body.assigneeIds)
+        ? body.assigneeIds
+        : (body.assigneeId == null || body.assigneeId === '' ? [] : [body.assigneeId])
+      const ids = raw.map((value) => idOf(value))
+      if (new Set(ids).size !== ids.length) throw bad('Исполнители повторяются')
+      if (ids.length) {
+        const found = await client.query('SELECT id FROM users WHERE id = ANY($1::int[])', [ids])
+        if (found.rows.length !== ids.length) throw bad('Исполнитель не найден', 404)
+      }
+      const previous = await client.query(
+        `SELECT u.name FROM issue_assignees ia
+         JOIN users u ON u.id = ia.user_id
+         WHERE ia.issue_id = $1 ORDER BY u.name`,
+        [id],
+      )
+      const oldNames = previous.rows.length
+        ? previous.rows.map((row) => row.name)
+        : (issue.assignee_id ? [await userName(client, issue.assignee_id)] : [])
+      const nextNames = ids.length
+        ? (await client.query('SELECT name FROM users WHERE id = ANY($1::int[]) ORDER BY name', [ids])).rows.map((row) => row.name)
+        : []
+      await client.query('DELETE FROM issue_assignees WHERE issue_id = $1', [id])
+      for (const userId of ids) {
+        await client.query('INSERT INTO issue_assignees (issue_id, user_id) VALUES ($1, $2)', [id, userId])
       }
       await addHistory(client, {
         issueId: id,
         userId: user.id,
         field: 'assignee',
-        oldValue: await userName(client, issue.assignee_id),
-        newValue: await userName(client, assigneeId),
+        oldValue: oldNames.filter((name) => name && name !== 'никто').join(', ') || null,
+        newValue: nextNames.join(', ') || null,
       })
-      next.assignee_id = assigneeId
+      next.assignee_id = ids[0] ?? null
     }
 
     if (body.sprintId !== undefined) {
@@ -436,6 +475,50 @@ issuesRouter.delete('/issues/:id', wrap(async (req, res) => {
     await fs.unlink(path.join(uploadDir, path.basename(name))).catch(() => {})
   }
   res.status(204).end()
+}))
+
+issuesRouter.post('/issues/place', wrap(async (req, res) => {
+  const id = idOf(req.body?.id)
+  const sprintId = req.body?.sprintId == null || req.body?.sprintId === '' ? null : idOf(req.body.sprintId)
+  let index = Number(req.body?.index)
+  if (!Number.isInteger(index) || index < 0) index = 0
+
+  await withTx(async (client) => {
+    const user = await requireUser(client, req.userId)
+    const issue = await assertIssue(client, id)
+    if (sprintId) {
+      const found = await client.query(
+        'SELECT id, name FROM sprints WHERE id = $1 AND project_id = $2',
+        [sprintId, issue.project_id],
+      )
+      if (!found.rows[0]) throw bad('Спринт не найден', 404)
+    }
+    const column = await client.query(
+      `SELECT id FROM issues
+       WHERE project_id = $1 AND sprint_id IS NOT DISTINCT FROM $2
+       ORDER BY position, id
+       FOR UPDATE`,
+      [issue.project_id, sprintId],
+    )
+    const ids = column.rows.map((row) => row.id).filter((item) => item !== id)
+    ids.splice(Math.min(index, ids.length), 0, id)
+    for (let position = 0; position < ids.length; position += 1) {
+      await client.query(
+        'UPDATE issues SET sprint_id = $1, position = $2, updated_at = now() WHERE id = $3',
+        [sprintId, position, ids[position]],
+      )
+    }
+    if ((issue.sprint_id || null) !== sprintId) {
+      await addHistory(client, {
+        issueId: id,
+        userId: user.id,
+        field: 'sprint',
+        oldValue: await sprintName(client, issue.sprint_id),
+        newValue: await sprintName(client, sprintId),
+      })
+    }
+  })
+  res.json({ ok: true })
 }))
 
 issuesRouter.post('/issues/reorder', wrap(async (req, res) => {

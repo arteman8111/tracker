@@ -15,6 +15,7 @@ export const state = reactive({
   labelId: '',
   assigneeId: '',
   meId: null,
+  user: null,
   detail: null,
   error: '',
   saving: '',
@@ -36,6 +37,7 @@ function toCard(issue) {
     estimateHours: issue.estimateHours,
     spentHours: issue.spentHours,
     assignee: issue.assignee,
+    assignees: issue.assignees || (issue.assignee ? [issue.assignee] : []),
     reporter: issue.reporter,
     sprint: issue.sprint,
     startDate: issue.startDate,
@@ -66,11 +68,17 @@ async function reloadMeta() {
 }
 
 export async function boot() {
+  const token = localStorage.getItem('rks-token')
+  if (!token) {
+    state.user = null
+    state.meId = null
+    state.ready = true
+    return
+  }
   try {
+    state.user = await api.me()
+    state.meId = state.user.id
     await reloadMeta()
-    const stored = Number(localStorage.getItem('rks-user-id'))
-    const me = state.users.find((user) => user.id === stored) || state.users[0]
-    if (me) setMe(me.id)
     const saved = sessionStorage.getItem('rks-scope')
     const known = state.sprints.some((sprint) => String(sprint.id) === saved)
     if (saved === 'backlog' || saved === 'all' || known) {
@@ -81,6 +89,10 @@ export async function boot() {
     }
     state.ready = true
   } catch (error) {
+    localStorage.removeItem('rks-token')
+    state.user = null
+    state.meId = null
+    state.ready = true
     setError(error)
   }
 }
@@ -115,7 +127,8 @@ export function visibleIssues(status) {
     .filter((issue) => !status || issue.status === status)
     .filter((issue) => {
       if (state.priority && issue.priority !== state.priority) return false
-      if (state.assigneeId && String(issue.assignee?.id || '') !== String(state.assigneeId)) return false
+      const people = issue.assignees?.length ? issue.assignees : (issue.assignee ? [issue.assignee] : [])
+      if (state.assigneeId && !people.some((person) => String(person.id) === String(state.assigneeId))) return false
       if (state.labelId && !issue.labels.some((label) => String(label.id) === String(state.labelId))) return false
       if (query && !`${issue.key} ${issue.title}`.toLowerCase().includes(query)) return false
       return true
@@ -207,11 +220,29 @@ export async function removeIssue(id) {
   if (state.detail?.id === id) state.detail = null
 }
 
-export async function createUser(name, email) {
-  const user = await api.createUser({ name, email })
+export async function login(email, password) {
+  const data = await api.login(email, password)
+  localStorage.setItem('rks-token', data.token)
+  state.ready = false
+  state.error = ''
+  await boot()
+}
+
+export async function logout() {
+  localStorage.removeItem('rks-token')
+  api.logout().catch(() => {})
+  state.user = null
+  state.meId = null
+  state.detail = null
+  state.issues = []
+  state.loaded = false
+  state.ready = true
+}
+
+export async function createUser(name, email, password) {
+  const user = await api.createUser({ name, email, password })
   state.users.push(user)
   state.users.sort((a, b) => a.name.localeCompare(b.name, 'ru'))
-  setMe(user.id)
 }
 
 export async function createLabel(name) {
@@ -231,10 +262,45 @@ export const patchChecklist = (id, body) => detailAction(() => api.patchChecklis
 export const deleteChecklist = (id) => detailAction(() => api.deleteChecklist(id))
 export const addComment = (text) => detailAction(() => api.comment(state.detail.id, text))
 export const deleteComment = (id) => detailAction(() => api.deleteComment(id))
-export const uploadFile = (file) => detailAction(() => api.upload(state.detail.id, file))
+export const uploadFile = (file, onProgress) => detailAction(() => api.uploadWithProgress(state.detail.id, file, onProgress))
 export const deleteFile = (id) => detailAction(() => api.deleteFile(id))
+export const renameFile = (id, filename) => detailAction(() => api.renameFile(id, filename))
 export const logTime = (body) => detailAction(() => api.logTime(state.detail.id, body))
 export const deleteTime = (id) => detailAction(() => api.deleteTime(id))
+
+export async function placeIssue(id, sprintId, index) {
+  const issue = state.issues.find((item) => item.id === id)
+  if (!issue) return
+  const target = sprintId || null
+  const column = state.issues
+    .filter((item) => (item.sprint?.id || null) === target)
+    .sort((a, b) => a.position - b.position || a.id - b.id)
+  const from = column.findIndex((item) => item.id === id)
+  let to = index
+  if (from >= 0 && from < to) to -= 1
+  if ((issue.sprint?.id || null) === target && from === to) return
+  const next = column.filter((item) => item.id !== id)
+  next.splice(Math.max(0, Math.min(to, next.length)), 0, issue)
+  const snapshot = state.issues.map((item) => ({
+    id: item.id,
+    sprint: item.sprint,
+    position: item.position,
+  }))
+  const sprint = target ? state.sprints.find((item) => item.id === target) : null
+  issue.sprint = sprint ? { id: sprint.id, name: sprint.name } : null
+  next.forEach((item, position) => { item.position = position })
+  try {
+    await api.place({ id, sprintId: target, index: Math.max(0, to) })
+  } catch (error) {
+    for (const item of snapshot) {
+      const row = state.issues.find((entry) => entry.id === item.id)
+      if (!row) continue
+      row.sprint = item.sprint
+      row.position = item.position
+    }
+    throw error
+  }
+}
 
 export async function assignSprint(issueId, sprintId) {
   replaceDetail(await api.patchIssue(issueId, { sprintId: sprintId || null }))

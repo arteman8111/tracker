@@ -1,5 +1,5 @@
 export const STATUSES = [
-  { id: 'todo', name: 'К выполнению' },
+  { id: 'todo', name: 'Бэклог' },
   { id: 'in_progress', name: 'В работе' },
   { id: 'review', name: 'Ревью' },
   { id: 'done', name: 'Готово' },
@@ -35,6 +35,24 @@ const HISTORY_FIELDS = {
   checklist: 'Чеклист',
   file: 'Файл',
   time: 'Время',
+}
+
+export function shortName(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return ''
+  if (parts.length === 1) return parts[0]
+  const last = parts[parts.length - 1]
+  const initials = parts.slice(0, -1).map((part) => `${part[0].toUpperCase()}.`).join('')
+  return `${last} ${initials}`
+}
+
+const CHIP_COLORS = ['#7ea0c4', '#c4a574', '#8fad8a', '#c49a9a', '#9a8ec4', '#7d9aa0']
+
+export function chipColor(name) {
+  const text = String(name || '')
+  let hash = 0
+  for (let index = 0; index < text.length; index += 1) hash = (hash + text.charCodeAt(index) * (index + 1)) % CHIP_COLORS.length
+  return CHIP_COLORS[hash]
 }
 
 export function byId(list, id) {

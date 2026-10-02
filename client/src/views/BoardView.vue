@@ -161,7 +161,7 @@ function open(issue) {
       <p>Ничего не найдено</p>
     </div>
     <div v-else class="board">
-      <section v-for="column in STATUSES" :key="column.id" class="column">
+      <section v-for="column in STATUSES" :key="column.id" class="column" :class="column.id">
         <header>
           <h2>{{ column.name }}</h2>
           <span>{{ visibleIssues(column.id).length }}</span>
